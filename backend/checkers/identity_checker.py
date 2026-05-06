@@ -1,56 +1,73 @@
-﻿# -*- coding: utf-8 -*-
-"""使用 LLM 扫描文本，检测可识别投标人身份的信息。"""
+# -*- coding: utf-8 -*-
+"""使用多模态模型（qwen3-vl:8b）逐页视觉扫描，检测可识别投标人身份的信息。
+
+相比纯文本方案，视觉扫描能额外发现：
+- 图片型公司 Logo / 印章
+- 背景水印
+- 图片型签名
+"""
+import base64
 import fitz
-from llm_client import get_llm_client
-from config import MODEL_CHAT
+from openai import OpenAI
+from config import OLLAMA_BASE_URL, OLLAMA_VL_MODEL
 
-# 每次发给 LLM 的最大字符数（避免 token 超限）
-CHUNK_SIZE = 3000
+# 页面渲染分辨率（dpi），72 为原始尺寸，150 在速度和识别率间取得平衡
+RENDER_DPI = 150
+SCALE = RENDER_DPI / 72
 
-SYSTEM_PROMPT = """你是一个投标文件审查专家。你的任务是检查文字内容中是否出现了可以识别投标人身份的信息。
+PROMPT = """你是投标文件审查专家。请仔细观察这张页面图片，判断是否存在可以识别投标人身份的内容。
 
 需要识别的内容包括：
-1. 公司名称（含简称、缩写，如"XX公司"、"本公司"指代性表述）
-2. 人员姓名（项目经理、工程师、法人等）
-3. 注册商标、品牌标识的文字描述
+1. 公司名称、简称、缩写（含"本公司"等指代）
+2. 人员姓名（项目经理、工程师、法人代表等）
+3. 公司 Logo、印章、注册商标图案
 4. 统一社会信用代码、营业执照号等证件号码
-5. 其他可能暴露投标人身份的特定标记
+5. 背景水印中包含的公司或个人信息
+6. 其他可能暴露投标人身份的任何标记
 
-请用以下格式回答：
+回答格式：
 - 若无上述内容：仅输出"无"
-- 若有：逐条列出，格式为"类型：原文内容"，每条占一行
+- 若有：逐条列出，格式为"类型：具体内容"，每条占一行
 
 不要输出任何多余解释。"""
 
 
-def _extract_text_chunks(doc: fitz.Document) -> list[str]:
-    full_text = ""
-    for page in doc:
-        full_text += page.get_text() + "\n"
+def _page_to_base64(page: fitz.Page) -> str:
+    mat = fitz.Matrix(SCALE, SCALE)
+    pix = page.get_pixmap(matrix=mat, colorspace=fitz.csRGB)
+    img_bytes = pix.tobytes("png")
+    return base64.b64encode(img_bytes).decode("utf-8")
 
-    chunks = []
-    for i in range(0, len(full_text), CHUNK_SIZE):
-        chunk = full_text[i:i + CHUNK_SIZE].strip()
-        if chunk:
-            chunks.append(chunk)
-    return chunks
+
+def _get_ollama_client() -> OpenAI:
+    # 兼容两种格式：带或不带 /v1 后缀
+    base = OLLAMA_BASE_URL.rstrip("/")
+    if not base.endswith("/v1"):
+        base = f"{base}/v1"
+    return OpenAI(api_key="ollama", base_url=base)
 
 
 def check(doc: fitz.Document) -> dict:
-    chunks = _extract_text_chunks(doc)
-    if not chunks:
-        return {"passed": True, "detail": "文档无文字内容", "violations": []}
-
-    client = get_llm_client()
+    client = _get_ollama_client()
     all_findings: list[str] = []
 
-    for idx, chunk in enumerate(chunks):
+    for i, page in enumerate(doc):
+        page_num = i + 1
         try:
+            img_b64 = _page_to_base64(page)
             resp = client.chat.completions.create(
-                model=MODEL_CHAT,
+                model=OLLAMA_VL_MODEL,
                 messages=[
-                    {"role": "system", "content": SYSTEM_PROMPT},
-                    {"role": "user", "content": f"请检查以下文字（第{idx+1}段）：\n\n{chunk}"},
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "image_url",
+                                "image_url": {"url": f"data:image/png;base64,{img_b64}"},
+                            },
+                            {"type": "text", "text": PROMPT},
+                        ],
+                    }
                 ],
                 temperature=0,
                 max_tokens=512,
@@ -60,9 +77,9 @@ def check(doc: fitz.Document) -> dict:
                 for line in result.splitlines():
                     line = line.strip()
                     if line and line != "无":
-                        all_findings.append(f"（第{idx+1}段）{line}")
+                        all_findings.append(f"第{page_num}页：{line}")
         except Exception as e:
-            all_findings.append(f"（第{idx+1}段）LLM 扫描失败：{e}")
+            all_findings.append(f"第{page_num}页：视觉扫描失败：{e}")
 
     passed = len(all_findings) == 0
     detail = "未发现可识别身份的信息" if passed else f"发现 {len(all_findings)} 处疑似身份信息"

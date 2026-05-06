@@ -9,6 +9,9 @@ AIRCHINA_BASE_URL   = os.getenv("AIRCHINA_BASE_URL", "")
 AI_HTTP_HOST_HEADER = os.getenv("AI_HTTP_HOST_HEADER", "")
 MODEL_CHAT          = os.getenv("MODEL_CHAT", "qwen2.5-72b")
 
+OLLAMA_BASE_URL     = os.getenv("OLLAMA_BASE_URL", "http://192.168.9.226:11434")
+OLLAMA_VL_MODEL     = os.getenv("OLLAMA_VL_MODEL", "qwen3-vl:8b")
+
 def _env_bool(name: str, default: bool) -> bool:
     raw = os.getenv(name)
     if raw is None:
