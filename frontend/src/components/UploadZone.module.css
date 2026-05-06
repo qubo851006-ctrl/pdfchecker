@@ -1,0 +1,41 @@
+.zone {
+  border: 2px dashed #c0c4d0;
+  border-radius: 12px;
+  padding: 48px 32px;
+  text-align: center;
+  cursor: pointer;
+  transition: border-color 0.2s, background 0.2s;
+  background: #fff;
+}
+
+.zone:hover:not(.disabled) {
+  border-color: #4f6ef7;
+  background: #f0f3ff;
+}
+
+.dragging {
+  border-color: #4f6ef7;
+  background: #e8ecff;
+}
+
+.disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.icon {
+  font-size: 48px;
+  margin-bottom: 12px;
+}
+
+.primary {
+  font-size: 16px;
+  font-weight: 600;
+  color: #333;
+  margin-bottom: 6px;
+}
+
+.hint {
+  font-size: 13px;
+  color: #888;
+}
